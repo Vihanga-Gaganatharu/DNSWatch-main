@@ -6,7 +6,7 @@ from scapy.layers.dns import DNS, DNSQR, DNSRR
 from scapy.layers.inet import UDP, IP, TCP
 from datetime import datetime
 from source.dnsfiglet import dnsfiglet
-from source.dnsfirewall import DNSSpoofingDetector  # dnsfirewall dosyanızın bulunduğu yere göre import edin
+from source.dnsfirewall import DNSSpoofingDetector  # Import according to the location of your dnsfirewall file
 from source.version import __version__
 
 class DNSListener:
@@ -24,7 +24,7 @@ class DNSListener:
         self.filter_dst_ip = filter_dst_ip
         self.dns_type = dns_type
         self.pcap_file = pcap_file
-        self.firewall = firewall  # firewall bayrağı
+        self.firewall = firewall  # firewall flag
         self.threshold = threshold
         self.window_size = window_size
         self.total_dns_requests = 0
@@ -41,16 +41,15 @@ class DNSListener:
             self.dns_detector = DNSSpoofingDetector(threshold=self.threshold, window_size=self.window_size)
 
     def process_packet(self, pkt):
-        # Ağı dinleme
+        # Listening to the network
         self.total_dns_requests += 1
 
         if DNS in pkt:
             if self.firewall and self.dns_detector:
-                # Firewall modunda ise DNS spoofing tespiti yap
+                # If in firewall mode, detect DNS spoofing
                 self.dns_detector.process_packet(pkt)
 
-            if self.filter_port and UDP in pkt and pkt[UDP].sport != self.filter_port and pkt[
-                UDP].dport != self.filter_port:
+            if self.filter_port and UDP in pkt and pkt[UDP].sport != self.filter_port and pkt[UDP].dport != self.filter_port:
                 return
 
             if self.filter_src_ip and IP in pkt and pkt[IP].src != self.filter_src_ip:
@@ -62,15 +61,15 @@ class DNSListener:
             if self.dns_type and pkt[IP].proto != self.dns_type:
                 return
 
-            # Kaynak IP'yi takip et
+            # Track source IP
             source_ip = pkt[IP].src
             self.source_ips[source_ip] = self.source_ips.get(source_ip, 0) + 1
 
-            # Hedef IP'yi takip et
+            # Track destination IP
             destination_ip = pkt[IP].dst
             self.destination_ips[destination_ip] = self.destination_ips.get(destination_ip, 0) + 1
 
-            if pkt.haslayer(TCP) and pkt[TCP].dport == 53:  # TCP üzerinden gelen DNS isteği
+            if pkt.haslayer(TCP) and pkt[TCP].dport == 53:  # DNS request over TCP
                 if pkt.haslayer(DNSQR):
                     qname = pkt[DNSQR].qname.decode()
                     self.unique_domains.add(qname)
@@ -81,8 +80,8 @@ class DNSListener:
                     if self.doh and qname in self.target_domains:
                         self.resolve_and_print_doh_result(qname)
 
-            elif pkt.haslayer(UDP) and pkt[UDP].dport == 53:  # UDP üzerinden gelen DNS isteği
-                if pkt[DNS].qr == 0:  # DNS isteği
+            elif pkt.haslayer(UDP) and pkt[UDP].dport == 53:  # DNS request over UDP
+                if pkt[DNS].qr == 0:  # DNS query
                     qname = pkt[DNSQR].qname.decode()
                     self.unique_domains.add(qname)
                     self.most_requested_domains[qname] = self.most_requested_domains.get(qname, 0) + 1
@@ -92,7 +91,7 @@ class DNSListener:
                     if self.doh and qname in self.target_domains:
                         self.resolve_and_print_doh_result(qname)
 
-                elif pkt[DNS].qr == 1:  # DNS yanıtı
+                elif pkt[DNS].qr == 1:  # DNS response
                     if DNSRR in pkt:
                         qname = pkt[DNSQR].qname.decode()
                         resp_ip = pkt[DNSRR].rdata
@@ -100,12 +99,12 @@ class DNSListener:
                             return
                         self.print_info(pkt, "DNS Response", qname, resp_ip)
 
-                        # DNS türünü takip et
+                        # Track DNS type
                         dns_type = pkt[IP].proto
                         self.dns_types[dns_type] = self.dns_types.get(dns_type, 0) + 1
 
         if self.pcap_file:
-            wrpcap(self.pcap_file, pkt, append=True)  # Paketleri .pcap dosyasına ekleyin.
+            wrpcap(self.pcap_file, pkt, append=True)  # Append packets to .pcap file
 
     def resolve_and_print_doh_result(self, qname):
         resolved_ips = self.resolve_dns_doh(qname)
@@ -147,12 +146,12 @@ class DNSListener:
         print("-" * 50)
 
     def resolve_dns_doh(self, dns_request):
-        # DNS isteğini DoH ile çözümle
+        # Resolve DNS request with DoH
         url = f"https://cloudflare-dns.com/dns-query?name={dns_request}&type=A"
         headers = {"Accept": "application/dns-json"}
         try:
             response = requests.get(url, headers=headers)
-            response.raise_for_status()  # HTTP isteği başarısız olursa
+            response.raise_for_status()  # If HTTP request fails
             result = response.json()
             if "Answer" in result:
                 answers = result["Answer"]
@@ -178,10 +177,10 @@ class DNSListener:
         print(f"{Fore.BLUE}Unique Domains        :{Style.RESET_ALL}", len(self.unique_domains))
         print(f"{Fore.BLUE}Most Requested Domains:{Style.RESET_ALL}")
         for domain, count in sorted(self.most_requested_domains.items(), key=lambda x: x[1], reverse=True):
-            if count > 5:  # Eşik değeri burada 5 olarak belirledik
+            if count > 5:  # Threshold value set to 5 here
                 print(f"\t{Fore.YELLOW}{domain}:{Style.RESET_ALL} {count} requests")
             else:
-                break  # Eşik değerden az olanları görmezden gelebiliriz
+                break  # Can ignore those less than the threshold value
         print(f"{Fore.BLUE}DNS Types:{Style.RESET_ALL}")
         for dns_type, count in sorted(self.dns_types.items()):
             dns_type_name = dns_type_names.get(dns_type, str(dns_type))
@@ -226,7 +225,7 @@ if __name__ == "__main__":
                                    dns_type=args.dns_type, pcap_file=args.pcap_file,
                                    firewall=args.firewall, threshold=args.threshold, window_size=args.window_size)
         dns_listener.listen()
-        dns_listener.print_summary()  # Özet raporu yazdır
+        dns_listener.print_summary()  # Print summary report
     except KeyboardInterrupt:
         print("\nProgram terminated by user.")
     except PermissionError:
